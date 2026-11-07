@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mountain Goats Fitness Challenge</title>
+<meta name="theme-color" content="#07090b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Goats">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  html,body{margin:0;height:100%;background:#07090b;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#f5f6f8}
+  body{padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box;background:#111820}
+  #app{position:absolute;top:0;left:0;width:100%;height:calc(100% - env(safe-area-inset-bottom));border:0;background:#07090b;opacity:0;transition:opacity .25s}
+  #app.on{opacity:1}
+  #door{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:#07090b;transition:opacity .3s}
+  #door.out{opacity:0;pointer-events:none}
+  #door img{width:132px;height:132px;border-radius:50%;box-shadow:0 18px 50px rgba(0,0,0,.6)}
+  #door .e{margin-top:22px;font-size:11px;letter-spacing:.24em;color:#f2c766;font-weight:800}
+  #door .t{font-size:26px;font-weight:800}
+  #door .s{margin-top:16px;color:#a8b2be;font-size:14px;max-width:280px;text-align:center;min-height:20px}
+  #ask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;justify-content:center;z-index:10}
+  #ask.on{display:flex}
+  #ask .card{width:100%;max-width:520px;background:#1B232B;border:1px solid #34414C;border-radius:22px 22px 0 0;padding:22px 20px calc(20px + env(safe-area-inset-bottom));box-sizing:border-box}
+  #ask h2{margin:0 0 8px;font-size:21px}
+  #ask p{margin:0 0 6px;color:#BBC4CF;font-size:16px;line-height:1.45}
+  #ask ul{margin:6px 0 4px;padding-left:20px;color:#BBC4CF;font-size:15px;line-height:1.6}
+  #ask button{display:block;width:100%;min-height:52px;border-radius:14px;border:0;font-size:17px;font-weight:800;margin-top:10px;cursor:pointer;font-family:inherit}
+  #ask .yes{background:linear-gradient(180deg,#f7d77e,#d79b34);color:#0B0E10;margin-top:16px}
+  #ask .no{background:transparent;color:#f5f6f8;border:1px solid #34414C}
+  #ask .err{color:#ff8a8a;font-size:14px;margin-top:8px;min-height:18px}
+</style>
+</head>
+<body>
+<iframe id="app" title="Mountain Goats Fitness Challenge" allow="clipboard-write; web-share"></iframe>
+<div id="door" role="status" aria-live="polite">
+  <img src="icon-192.png" alt="">
+  <div class="e">MOUNTAIN GOATS</div>
+  <div class="t">Fitness Challenge</div>
+  <div class="s" id="doorMsg"></div>
+</div>
+<div id="ask" role="dialog" aria-modal="true" aria-labelledby="askH">
+  <div class="card">
+    <h2 id="askH">Turn on notifications?</h2>
+    <p>Your phone will let you know when:</p>
+    <ul><li>someone calls you out</li><li>you’re asked for proof</li><li>it’s getting late and you haven’t logged</li><li>leadership posts an update</li></ul>
+    <p style="font-size:14px">No names or numbers show on your lock screen. Turn them off any time in More › Notifications.</p>
+    <button class="yes" id="askYes">Allow notifications</button>
+    <button class="no" id="askNo">Not now</button>
+    <div class="err" id="askErr"></div>
+  </div>
+</div>
+<script>
+(function () {
+  // The Google Apps Script web app. Change this only if you make a brand-new deployment.
+  var EXEC = window.GOAT_TEST_EXEC || 'https://script.google.com/macros/s/AKfycbw7In05JDVEnM1e0a-6vkmCmLprP8IuEkgrv7aQzfDAjBB6Mp0DlHGABAvS_-oDCFkWPg/exec';
+  var FB = '10.12.2';
+  var appWin = null, cfg = null, cfgP = null, reg = null, messaging = null;
+  var frame = document.getElementById('app'), door = document.getElementById('door');
+  var ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  var supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  var okOrigin = function (o) { return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o) || (window.GOAT_TEST_ORIGIN && o === window.GOAT_TEST_ORIGIN); };
+
+  frame.src = EXEC;
+  var shown = false;
+  function show() { if (shown) return; shown = true; frame.classList.add('on'); door.classList.add('out'); }
+  setTimeout(show, 9000);   // never stay stuck on the front door
+  setTimeout(function () { if (!shown) document.getElementById('doorMsg').textContent = 'Loading the app…'; }, 3000);
+
+  if (supported) {
+    reg = navigator.serviceWorker.register('sw.js').catch(function () { supported = false; return null; });
+    navigator.serviceWorker.addEventListener('message', function (e) { if (e.data && e.data.goat === 'refresh') tell({ goat: 'refresh' }); });
+  }
+
+  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function perm() { return supported ? Notification.permission : 'unsupported'; }
+  function tell(m) { if (appWin) { try { appWin.postMessage(m, '*'); } catch (e) {} } }
+  function state() { return { goat: 'shell', v: 1, supported: supported, perm: perm(), ios: ios, standalone: standalone, ready: !!(cfg && cfg.ok), url: location.origin + location.pathname }; }
+
+  function loadCfg() {
+    if (!cfgP) cfgP = fetch(EXEC + '?cfg=1', { credentials: 'omit' }).then(function (r) { return r.json(); })
+      .then(function (j) { cfg = j; return j; }).catch(function () { cfg = { ok: false }; cfgP = null; return cfg; });
+    return cfgP;
+  }
+  function loadScript(src) {
+    return new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
+  }
+  function getMessaging() {
+    if (messaging) return Promise.resolve(messaging);
+    if (window.GOAT_FAKE_FIREBASE) { messaging = window.GOAT_FAKE_FIREBASE; return Promise.resolve(messaging); }
+    var base = 'https://www.gstatic.com/firebasejs/' + FB + '/';
+    return loadScript(base + 'firebase-app-compat.js').then(function () { return loadScript(base + 'firebase-messaging-compat.js'); })
+      .then(function () { if (!firebase.apps.length) firebase.initializeApp(cfg.firebase); messaging = firebase.messaging(); return messaging; });
+  }
+  function sendToken() {
+    if (!supported || perm() !== 'granted') return Promise.resolve(null);
+    return loadCfg().then(function (c) {
+      if (!c || !c.ok) throw new Error('Notifications are not set up yet. Ask an admin.');
+      return Promise.all([getMessaging(), reg]);
+    }).then(function (x) {
+      if (!x[1]) throw new Error('This phone can’t receive notifications.');
+      return x[0].getToken({ vapidKey: cfg.vapidKey, serviceWorkerRegistration: x[1] });
+    }).then(function (t) {
+      if (!t) throw new Error('Could not get a notification code. Try again.');
+      tell({ goat: 'token', token: t }); return t;
+    }).catch(function (e) { tell({ goat: 'err', msg: String(e && e.message || e) }); return null; });
+  }
+
+  // Our own prompt: the tap on "Allow" happens on this page, which phones require before asking.
+  var askBox = document.getElementById('ask'), askErr = document.getElementById('askErr');
+  function openAsk() { askErr.textContent = ''; askBox.classList.add('on'); document.getElementById('askYes').focus(); }
+  function closeAsk() { askBox.classList.remove('on'); }
+  document.getElementById('askNo').onclick = function () { closeAsk(); tell({ goat: 'perm', perm: perm(), skipped: true }); };
+  document.getElementById('askYes').onclick = function () {
+    var btn = this; btn.disabled = true;
+    var done = function (p) {
+      btn.disabled = false; closeAsk();
+      tell({ goat: 'perm', perm: p });
+      if (p === 'granted') sendToken();
+    };
+    try {
+      var r = Notification.requestPermission(done);
+      if (r && r.then) r.then(done, function () { done(perm()); });
+    } catch (e) { btn.disabled = false; askErr.textContent = 'Your phone blocked the request. Check its notification settings.'; }
+  };
+
+  window.addEventListener('message', function (e) {
+    if (!okOrigin(e.origin) || !e.data || typeof e.data !== 'object' || !e.data.goat) return;
+    appWin = e.source;
+    var m = e.data;
+    if (m.goat === 'hello') {
+      show();
+      tell({ goat: 'saved', sess: load('goat_sess'), known: load('goat_known') || [] });
+      loadCfg().then(function () { tell(state()); if (perm() === 'granted' && cfg.ok) sendToken(); });
+    } else if (m.goat === 'ask') {
+      if (!supported) { tell(state()); return; }
+      if (perm() === 'granted') { sendToken(); return; }
+      openAsk();
+    } else if (m.goat === 'badge') {
+      try { var n = Math.max(0, Math.floor(Number(m.n) || 0)); if (n && navigator.setAppBadge) navigator.setAppBadge(n); else if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch (e) {}
+    } else if (m.goat === 'keep') {
+      // A copy of the sign-in, kept in this page's own storage so the phone doesn't throw it away.
+      if (m.sess && m.sess.id && m.sess.token) save('goat_sess', { id: String(m.sess.id), token: String(m.sess.token), name: String(m.sess.name || ''), a: String(m.sess.a || '') });
+      if (Array.isArray(m.known)) save('goat_known', m.known.slice(0, 4));
+    } else if (m.goat === 'forget') {
+      var cur = load('goat_sess');
+      if (cur && cur.id === m.id) { try { localStorage.removeItem('goat_sess'); } catch (e) {} }
+      if (m.drop) save('goat_known', (load('goat_known') || []).filter(function (k) { return k.id !== m.id; }));
+    } else if (m.goat === 'off') {
+      loadCfg().then(function (c) { if (!c || !c.ok) throw 0; return getMessaging(); }).then(function (ms) { return ms.deleteToken(); }).catch(function () {}).then(function () { tell(state()); });
+    }
+  });
+})();
+</script>
+</body>
+</html>
